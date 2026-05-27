@@ -1,0 +1,18 @@
+# Loom — never commit user state to source control.
+# These files are runtime artifacts, accumulated per-machine.
+state/
+**/state/
+*.jsonl
+!scripts/**/*.example.jsonl
+
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# Local install/uninstall backups
+*.bak.*
