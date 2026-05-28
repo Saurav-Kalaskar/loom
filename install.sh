@@ -29,28 +29,34 @@ require() {
 # ────────────────────────────────────────────────────────────────────────────
 #  CLI flags
 # ────────────────────────────────────────────────────────────────────────────
-INSTALL_HOOKS=""   # "" = ask, "yes" = force install, "no" = skip
+INSTALL_HOOKS=""        # "" = ask, "yes" = force install, "no" = skip
+INSTALL_CRITIC_GATE=""  # "" = ask, "yes" = enable v2.0 critic gate, "no" = skip
 ASSUME_YES=0
 while [ $# -gt 0 ]; do
     case "$1" in
-        --hooks)     INSTALL_HOOKS="yes" ;;
-        --no-hooks)  INSTALL_HOOKS="no"  ;;
-        -y|--yes)    ASSUME_YES=1 ;;
+        --hooks)            INSTALL_HOOKS="yes" ;;
+        --no-hooks)         INSTALL_HOOKS="no"  ;;
+        --critic-gate)      INSTALL_CRITIC_GATE="yes" ;;
+        --no-critic-gate)   INSTALL_CRITIC_GATE="no"  ;;
+        -y|--yes)           ASSUME_YES=1 ;;
         -h|--help)
             cat <<EOF
 Usage: $0 [options]
 
 Options:
-  --hooks       Install Phase 11 lifecycle hooks without prompting
-  --no-hooks    Skip Phase 11 hooks entirely
-  -y, --yes     Assume yes for all prompts (defaults: install hooks)
-  -h, --help    Show this help
+  --hooks            Install Phase 11 lifecycle hooks without prompting
+  --no-hooks         Skip Phase 11 hooks entirely
+  --critic-gate      Enable v2.0 deterministic critic gate (SubagentStop hook)
+  --no-critic-gate   Skip the critic gate (default)
+  -y, --yes          Assume yes for prompts (hooks=yes, critic-gate=NO)
+  -h, --help         Show this help
 
 Examples:
-  bash install.sh             # interactive — asks about hooks
-  bash install.sh --hooks     # install everything including hooks
-  bash install.sh --no-hooks  # install scripts only; skip hooks
-  bash install.sh -y          # full silent install
+  bash install.sh                     # interactive — asks about hooks + critic gate
+  bash install.sh --hooks             # lifecycle hooks, prompt for critic gate
+  bash install.sh --no-hooks          # scripts only; no hooks
+  bash install.sh -y                  # silent: hooks on, critic gate off
+  bash install.sh -y --critic-gate    # silent: hooks on, critic gate on
 EOF
             exit 0
             ;;
@@ -95,7 +101,14 @@ for f in SKILL.md \
          scripts/reflexion.sh scripts/session_checkpoint.sh scripts/critic_gate.sh \
          scripts/web_research.sh scripts/skill_library.sh scripts/sparc_envelope.sh \
          scripts/rag_grep.sh \
-         scripts/hooks/session_event.sh scripts/hooks/edit_event.sh; do
+         scripts/loom_config.sh scripts/loom_env.sh scripts/run_sentinel.sh \
+         scripts/hooks/session_event.sh scripts/hooks/edit_event.sh \
+         scripts/hooks/critic_stop.sh \
+         loom-research/SKILL.md loom-grep/SKILL.md loom-envelope/SKILL.md \
+         loom-critic/SKILL.md loom-recall/SKILL.md loom-skills/SKILL.md \
+         loom-checkpoint/SKILL.md loom-workflow/SKILL.md \
+         assets/loom-orchestrate.reference.js assets/loom-research.reference.js \
+         assets/workflow-contract.md config.default.json; do
     [ -f "${SCRIPT_DIR}/${f}" ] || fatal "package incomplete: missing ${f}"
 done
 say "package files present ✓"
@@ -112,6 +125,30 @@ cp "${SCRIPT_DIR}/scripts/"*.sh "${DEST_DIR}/scripts/"
 cp "${SCRIPT_DIR}/scripts/hooks/"*.sh "${DEST_DIR}/scripts/hooks/"
 chmod +x "${DEST_DIR}/scripts/"*.sh "${DEST_DIR}/scripts/hooks/"*.sh
 say "skill installed at ${DEST_DIR}"
+
+# Sibling skills for slash-menu autocomplete (each is its own /loom-<sub>)
+SKILLS_DIR="$(dirname "${DEST_DIR}")"
+for sub in research grep envelope critic recall skills checkpoint workflow; do
+    sib_dir="${SKILLS_DIR}/loom-${sub}"
+    mkdir -p "${sib_dir}"
+    cp "${SCRIPT_DIR}/loom-${sub}/SKILL.md" "${sib_dir}/SKILL.md"
+done
+say "sibling slash skills installed: /loom-{research,grep,envelope,critic,recall,skills,checkpoint,workflow}"
+
+# v2.0 — Workflow reference seeds (Claude adapts these at runtime; never executed directly)
+mkdir -p "${DEST_DIR}/assets"
+cp "${SCRIPT_DIR}/assets/"*.js "${DEST_DIR}/assets/" 2>/dev/null || true
+cp "${SCRIPT_DIR}/assets/workflow-contract.md" "${DEST_DIR}/assets/"
+mkdir -p "${HOME}/.claude/workflows"   # where Claude authors the live loom-orchestrate.js
+say "workflow seeds installed to ${DEST_DIR}/assets/"
+
+# v2.0 — config: seed state/config.json from default ONLY if absent (never clobber overrides)
+if [ ! -f "${DEST_DIR}/state/config.json" ]; then
+    cp "${SCRIPT_DIR}/config.default.json" "${DEST_DIR}/state/config.json"
+    say "seeded ${DEST_DIR}/state/config.json (per-role model routing)"
+else
+    say "kept existing ${DEST_DIR}/state/config.json (not overwritten)"
+fi
 
 # ────────────────────────────────────────────────────────────────────────────
 #  Hooks decision
@@ -144,9 +181,41 @@ EOF
 fi
 
 # ────────────────────────────────────────────────────────────────────────────
+#  Critic-gate decision (v2.0) — opt-in, default NO (it shells out to claude -p)
+# ────────────────────────────────────────────────────────────────────────────
+if [ -z "${INSTALL_CRITIC_GATE}" ]; then
+    if [ "${ASSUME_YES}" = "1" ]; then
+        INSTALL_CRITIC_GATE="no"   # silent installs default OFF
+    else
+        hr
+        cat <<'EOF'
+v2.0 deterministic critic gate (optional, default No)
+  Adds a SubagentStop hook that, ONLY during an active Loom run, runs an
+  adversarial critic and forces iterate-until-pass before the agent stops.
+  It shells out to `claude -p` (extra model call per critic cycle) and is a
+  strict no-op outside a Loom run. Fail-open: never blocks you on timeout.
+
+EOF
+        printf 'Enable critic gate? [y/N] '
+        read -r answer
+        case "${answer:-N}" in
+            [Yy]*) INSTALL_CRITIC_GATE="yes" ;;
+            *)     INSTALL_CRITIC_GATE="no"  ;;
+        esac
+    fi
+fi
+
+# The critic-gate hook requires the lifecycle-hooks merge path to run (it writes
+# to the same settings.json). If the user wants the gate but declined hooks,
+# enable the merge path anyway (it only adds the SubagentStop entry).
+HOOKS_MERGE="no"
+[ "${INSTALL_HOOKS}" = "yes" ] && HOOKS_MERGE="yes"
+[ "${INSTALL_CRITIC_GATE}" = "yes" ] && HOOKS_MERGE="yes"
+
+# ────────────────────────────────────────────────────────────────────────────
 #  Hooks install (if elected)
 # ────────────────────────────────────────────────────────────────────────────
-if [ "${INSTALL_HOOKS}" = "yes" ]; then
+if [ "${HOOKS_MERGE}" = "yes" ]; then
     hr
     say "Installing hooks block into ${SETTINGS}"
     mkdir -p "$(dirname "${SETTINGS}")"
@@ -162,10 +231,10 @@ if [ "${INSTALL_HOOKS}" = "yes" ]; then
     cp "${SETTINGS}" "${BACKUP}"
     say "backup: ${BACKUP}"
 
-    # Idempotent merge via python.
-    python3 - "${SETTINGS}" <<'PY'
+    # Idempotent merge via python. Args: <settings_path> <lifecycle yes|no> <critic yes|no>
+    python3 - "${SETTINGS}" "${INSTALL_HOOKS:-no}" "${INSTALL_CRITIC_GATE:-no}" <<'PY'
 import json, sys
-path = sys.argv[1]
+path, want_lifecycle, want_critic = sys.argv[1], sys.argv[2] == "yes", sys.argv[3] == "yes"
 with open(path) as f:
     cfg = json.load(f)
 
@@ -177,6 +246,7 @@ SESS_CMD_START   = LOOM_PREFIX + "session_event.sh start"
 SESS_CMD_STOP    = LOOM_PREFIX + "session_event.sh stop"
 EDIT_CMD_PRE     = LOOM_PREFIX + "edit_event.sh pre"
 EDIT_CMD_POST    = LOOM_PREFIX + "edit_event.sh post"
+CRITIC_CMD       = LOOM_PREFIX + "critic_stop.sh"
 
 def has_loom_command(slot, cmd):
     """True if any hook entry in this lifecycle slot already runs `cmd`."""
@@ -186,21 +256,25 @@ def has_loom_command(slot, cmd):
                 return True
     return False
 
-def add_hook(slot_name, cmd, matcher=None):
+def add_hook(slot_name, cmd, matcher=None, timeout=5):
     slot = hooks.setdefault(slot_name, [])
     if has_loom_command(slot, cmd):
         return False
-    entry = {"hooks": [{"type": "command", "command": cmd, "timeout": 5}]}
+    entry = {"hooks": [{"type": "command", "command": cmd, "timeout": timeout}]}
     if matcher is not None:
         entry["matcher"] = matcher
     slot.append(entry)
     return True
 
 added = 0
-added += add_hook("SessionStart", SESS_CMD_START)
-added += add_hook("Stop",         SESS_CMD_STOP)
-added += add_hook("PreToolUse",   EDIT_CMD_PRE,  matcher=PRE_POST_MATCHER)
-added += add_hook("PostToolUse",  EDIT_CMD_POST, matcher=PRE_POST_MATCHER)
+if want_lifecycle:
+    added += add_hook("SessionStart", SESS_CMD_START)
+    added += add_hook("Stop",         SESS_CMD_STOP)
+    added += add_hook("PreToolUse",   EDIT_CMD_PRE,  matcher=PRE_POST_MATCHER)
+    added += add_hook("PostToolUse",  EDIT_CMD_POST, matcher=PRE_POST_MATCHER)
+if want_critic:
+    # SubagentStop critic gate; longer timeout since it may invoke `claude -p`.
+    added += add_hook("SubagentStop", CRITIC_CMD, timeout=120)
 
 with open(path, "w") as f:
     json.dump(cfg, f, indent=2)
@@ -209,10 +283,11 @@ with open(path, "w") as f:
 print(f"loom-hooks: added {added} new hook(s); existing entries left in place")
 PY
     say "hooks installed (re-running this script is safe — duplicates are skipped)"
+    [ "${INSTALL_CRITIC_GATE}" = "yes" ] && say "v2.0 critic gate enabled (SubagentStop). Disable: re-run uninstall or edit settings.json."
 else
     hr
-    say "Skipping hooks (Phase 11 will be degraded)"
-    say "To add hooks later: re-run with --hooks"
+    say "Skipping hooks (Phase 11 will be degraded; v2.0 critic gate off)"
+    say "To add later: re-run with --hooks and/or --critic-gate"
 fi
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -238,12 +313,36 @@ say "Verifying install…"
 "${DEST_DIR}/scripts/session_checkpoint.sh" list >/dev/null \
     && say "  session_checkpoint.sh ✓" \
     || warn "  session_checkpoint.sh FAILED"
+# v2.0 probes
+"${DEST_DIR}/scripts/loom_config.sh" emit_json >/dev/null \
+    && say "  loom_config.sh ✓" \
+    || warn "  loom_config.sh FAILED"
+MODE="$("${DEST_DIR}/scripts/loom_env.sh" workflow_probe 2>/dev/null || echo '?')"
+say "  loom_env.sh ✓ (orchestration mode: ${MODE})"
+# critic_stop.sh must be a strict no-op when no run is active → exit 0
+"${DEST_DIR}/scripts/run_sentinel.sh" stop >/dev/null 2>&1 || true
+if printf '{}' | "${DEST_DIR}/scripts/hooks/critic_stop.sh" >/dev/null 2>&1; then
+    say "  critic_stop.sh ✓ (no-op when idle — verified exit 0)"
+else
+    warn "  critic_stop.sh FAILED no-op self-test"
+fi
 
 hr
 say "Done."
-say "Use it with:  /loom <task>  inside Claude Code."
+say "Use it with:"
+say "  /loom <task>             auto: native Workflow spine if available, else prose"
+say "  /loom --workflow <task>  force the v2.0 Workflow spine"
+say "  /loom --prose <task>     force the prose pipeline (Phases 0–15)"
+say "  /loom menu               list direct-entry subcommands"
+say "  /loom-<subcommand> ...   single phase via slash command (research, grep,"
+say "                           envelope, critic, recall, skills, checkpoint,"
+say "                           workflow — all appear in / autocomplete)"
+say "Orchestration mode now:  ${MODE}"
+say "Model routing:  $("${DEST_DIR}/scripts/loom_config.sh" emit_json 2>/dev/null)"
 say "Memory & state directory:  ${DEST_DIR}/state/"
-if [ "${INSTALL_HOOKS}" = "yes" ]; then
-    say "Hooks active. Restart any open Claude Code session to load SessionStart hook."
+say "Verify model reachability (optional, costs a few tokens):"
+say "  bash ${DEST_DIR}/scripts/loom_env.sh model_probe"
+if [ "${HOOKS_MERGE}" = "yes" ]; then
+    say "Hooks active. Restart any open Claude Code session to load them."
 fi
 hr

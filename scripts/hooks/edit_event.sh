@@ -20,7 +20,7 @@
 #   - timestamp
 #
 # The hash lets you correlate ("did another session touch the same file?")
-# without storing corp paths or content.
+# without storing full paths or content.
 #
 # Failure mode: silent best-effort. Any error → exit 0.
 

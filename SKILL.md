@@ -1,6 +1,6 @@
 ---
 name: loom
-description: A 16-phase orchestrator for Claude Code that weaves parallel research and code agents into one coordinated output. Built-in self-learning (Reflexion), reusable skill library (Voyager), session memory, deep-research web fan-out, and lifecycle hooks. Pure shell + python3, zero installs, fully corp-network-safe.
+description: Run a task through Loom's multi-agent pipeline — native Workflow spine when available, prose fallback otherwise. Or use /loom-<sub> for a single phase.
 allowed-tools: Bash(*) Read Write Edit Glob Grep Agent Skill WebFetch WebSearch
 disable-model-invocation: true
 ---
@@ -14,7 +14,121 @@ You support polyglot stacks (Java, .NET, Python, Node.js, Go) and modern UIs (Re
 ## Current Task Assignment
 **Task to Execute:** $ARGUMENTS
 
-*Note: If the task assignment above is empty, ask the user what they would like to work on.*
+*Note: If the task assignment above is empty, treat it as `menu` and show the subcommand menu below.*
+
+## Subcommand Dispatcher (read this FIRST)
+
+Loom supports two invocation modes:
+
+1. **Full pipeline** — `/loom <task description>` runs the entire 16-phase orchestration. Default for any input that is not a known subcommand.
+2. **Direct phase entry** — `/loom <subcommand> [args]` jumps straight into a single standalone phase, skipping orchestration overhead. Use when you know exactly which capability you want.
+
+Each subcommand also has a dedicated slash entry — `/loom-research`, `/loom-grep`, `/loom-envelope`, `/loom-critic`, `/loom-recall`, `/loom-skills`, `/loom-checkpoint` — for discoverability via Claude Code's `/` autocomplete menu. The two invocation forms are equivalent and route to the same backing scripts. A further entry, `/loom-workflow`, runs the v2.0 native Workflow spine directly (see Phase -1).
+
+### Parsing rule
+
+Inspect the **first whitespace-delimited token** of `$ARGUMENTS`:
+
+- If the token equals one of the subcommand names below (case-insensitive), invoke the matching phase **only** with the remaining tokens as its args. Do **not** run Phases 0–15 in sequence.
+- If the token is `menu`, `help`, or `--help`, or `$ARGUMENTS` is empty, print the **Subcommand Menu** below and stop.
+- If the task text contains `--workflow`, force the native Workflow spine (Phase -1 → workflow). If it contains `--prose`, force the prose pipeline (skip Phase -1, go straight to Phase 0). Strip the flag from the task text before proceeding.
+- Otherwise, treat the entire `$ARGUMENTS` string as a task description and proceed to **Phase -1: Orchestration Mode Selection** below.
+
+### Subcommand Menu
+
+| Subcommand   | Phase  | What it does                                  | Backing script                  |
+|--------------|--------|-----------------------------------------------|---------------------------------|
+| `research`   | 7b     | Web fan-out research (5 parallel researchers) | `scripts/web_research.sh`       |
+| `grep`       | 7a     | Local code retrieval (ripgrep + ranking)      | `scripts/rag_grep.sh`           |
+| `envelope`   | 6      | SPARC stage envelope generator                | `scripts/sparc_envelope.sh`     |
+| `critic`     | 12     | Adversarial diff reviewer gate                | `scripts/critic_gate.sh`        |
+| `recall`     | 9      | Reflexion lesson read/write/hash              | `scripts/reflexion.sh`          |
+| `skills`     | 9b     | Voyager-style skill library CRUD              | `scripts/skill_library.sh`      |
+| `checkpoint` | 10     | Session state new/read/write/list/prune       | `scripts/session_checkpoint.sh` |
+| `menu`       | —      | Show this table and exit                      | —                               |
+
+### Subcommand usage
+
+For each subcommand, the orchestrator must:
+
+1. Resolve the script path: `~/.claude/skills/loom/scripts/<script>.sh`.
+2. Invoke it via `Bash` with the remaining `$ARGUMENTS` tokens as positional args (after first scrubbing any shell-injection metacharacters from user input).
+3. Return the script's stdout to the user verbatim. Do not summarize unless asked.
+4. Skip every other phase. No Reflexion read/write, no critic gate, no checkpoint. The user explicitly opted into a single-phase invocation.
+
+Examples (what the user types → what the orchestrator runs):
+
+```
+/loom research connection pooling in pgbouncer
+  → bash scripts/web_research.sh start <hash> pro "connection pooling in pgbouncer"
+    (orchestrator must still do hash → tier prompt → fan-out 5 Agents → synthesize → finalize)
+
+/loom grep search ./ "useEffect cleanup"
+  → bash scripts/rag_grep.sh search ./ "useEffect cleanup" 20
+
+/loom envelope stages
+  → bash scripts/sparc_envelope.sh stages
+
+/loom envelope envelope refinement "fix race in cache eviction"
+  → bash scripts/sparc_envelope.sh envelope refinement "fix race in cache eviction"
+
+/loom critic "<diff summary>" "<paths>"
+  → bash scripts/critic_gate.sh prompt "<diff summary>" "<paths>"
+    (orchestrator then spawns one Agent with returned prompt body)
+
+/loom recall read <hash> 3
+  → bash scripts/reflexion.sh read <hash> 3
+
+/loom skills find "auth middleware"
+  → bash scripts/skill_library.sh find "auth middleware" 5
+
+/loom checkpoint new
+  → bash scripts/session_checkpoint.sh new
+
+/loom checkpoint write <id> <phase> '<state_json>'
+  → bash scripts/session_checkpoint.sh write <id> <phase> '<state_json>'
+```
+
+### Subcommand discipline
+
+- Subcommands are **single-phase**. They do not chain into other phases. If the user wants chained behavior, they call the full pipeline.
+- The full pipeline (Phases 0–15) is unchanged below. All phase coupling assumptions still hold there.
+- New subcommands MUST map 1:1 to an existing standalone-safe script. Do not invent subcommands for phases that need prior phase context (4, 11, 13, 14, 15).
+- If the user passes an unknown subcommand-shaped first token (e.g., `/loom xyzzy …`), **do not** silently fall through to the pipeline if the token looks like a subcommand attempt (single word, no spaces in the first 20 chars). Instead, print "unknown subcommand `xyzzy`" and the menu, then stop. This avoids accidentally running an expensive 16-phase pipeline on a typo.
+
+---
+
+## Phase -1: Orchestration Mode Selection (v2.0)
+
+Before any phase, decide HOW to orchestrate. Loom v2.0 has a **native
+Dynamic-Workflow spine** (deterministic, parallel, model-routed, backgrounded)
+and the **prose pipeline** (Phases 0–15) as a graceful fallback.
+
+Run the probe:
+```
+bash ~/.claude/skills/loom/scripts/loom_env.sh workflow_probe
+```
+
+- Prints **`workflow`** → hand off to the native spine: invoke the
+  `/loom-workflow` skill with the task (`loom-workflow/SKILL.md` authors and runs
+  `~/.claude/workflows/loom-orchestrate.js`). Do NOT also run Phases 0–15 — the
+  workflow IS the pipeline. After it completes, report its results and STOP.
+- Prints **`prose`** → the Workflow runtime is unavailable (older Claude Code,
+  or `workflow_ok:false` in config, or `--prose` forced). Proceed to Phase 0 and
+  run the prose pipeline below exactly as in v1.2.
+
+**Override:** `--workflow` forces the spine; `--prose` forces Phases 0–15.
+
+**Why dual-path:** Dynamic Workflows are research-preview. If the runtime
+changes or is absent, loom degrades to the prose pipeline rather than breaking.
+Both paths call the *same* backing scripts and the same learning layer, so the
+behavior is equivalent; the spine is just deterministic and cheaper (per-stage
+model routing: haiku researchers, sonnet build, opus critic).
+
+The 7 sibling slash skills (`/loom-research`, etc.) work identically regardless
+of which mode the parent selects — they delegate to the same scripts.
+
+---
 
 ## Phase 0: Dynamic Context Injection (Anti-Hallucination)
 Before you begin, here is the real-time state of the repository injected directly into your context. Base all decisions on this reality, not assumptions:
@@ -120,7 +234,7 @@ Before any agent edits code, hydrate context from the local repo with ripgrep + 
 Skip Phase 7a if the working directory is not a code repo (e.g., the user is at `~`). Use `Phase 0`'s git-rev-parse guard to detect.
 
 ## Phase 7b: Deep Research via Web Fan-Out (external knowledge)
-Before any agent reasons on architecture, hydrate context from the live web with a fan-out research pattern. Five parallel researchers, each working a distinct angle, synthesized into one cited brief. This replaces the embeddings-based RAG concept because the corp environment cannot install `chromadb` / `sentence-transformers`, AND because external knowledge (current Anthropic SDK patterns, library docs, RFCs, community know-how) is more valuable for grounding decisions than indexing a local repo.
+Before any agent reasons on architecture, hydrate context from the live web with a fan-out research pattern. Five parallel researchers, each working a distinct angle, synthesized into one cited brief. This uses no embeddings stack (no `chromadb` / `sentence-transformers` install needed), because external knowledge (current SDK patterns, library docs, RFCs, community know-how) is more valuable for grounding decisions than indexing a local repo — and web fan-out delivers it dependency-free.
 
 ### Auto-skip
 First, check whether the task is too small to warrant research:
@@ -152,7 +266,7 @@ Pro is the recommended default. Surface the wall timeout in the question text so
    - Angles: `official_docs`, `community_qa`, `source_issues`, `recent_blogs`, `benchmarks_caseStudies`
    - Each agent gets: assigned angle, round count, sources per round, word budget, citation rule, query-scrubbing rule, and the canonical partial-output path from `partial_path <hash> <angle>`.
    - **Tools allowed for researchers**: `WebSearch`, `WebFetch` only.
-   - **Query-scrubbing rule (mandatory in every researcher prompt)**: never include corp proper nouns (project names, internal API names, internal identifiers) in WebSearch queries. Generalize to neutral technical terms before searching. This prevents corp leakage to public search engines.
+   - **Query-scrubbing rule (mandatory in every researcher prompt)**: never include private/internal proper nouns (project names, internal API names, internal identifiers) in WebSearch queries. Generalize to neutral technical terms before searching. This prevents leaking private context to public search engines.
    - **Citation rule**: every claim emits `{url, quoted_passage, claim}`. Uncited claims are dropped at synthesis. Cognitive pattern: `divergent`.
    - **Atomic write**: researchers write to `<partial_path>.tmp` and `mv` to `<partial_path>` to survive watchdog timeout.
 4. **Synthesize** — after researchers return, dispatch one `Agent` (cognitive pattern: `convergent`, tools: `Read` only) that reads the 5 partial files and emits `~/.claude/skills/loom/state/research/<hash>/brief.md`. Synthesizer resolves contradictions by preferring official sources, more-recent dates, and corroborated claims across multiple angles.
@@ -170,7 +284,7 @@ Act as a Senior Software Engineer to execute the daily sprint task. Leverage Cla
 4. **API Migrations:** Invoke the `/claude-api` skill if the task involves Anthropic/Claude API integrations to automatically pull the latest SDK references.
 
 ### Thought-Action-Observation Scratchpad
-Within each significant edit loop, append to `.grid/scratchpad.md`:
+Within each significant edit loop, append to a `scratchpad.md` in the working repo (or `~/.claude/skills/loom/state/scratchpad.md` when not in a repo):
 ```
 ## Thought
 <plan>
@@ -200,7 +314,7 @@ On every successful sprint that produced a reusable artifact (script, prompt tem
 ~/.claude/skills/loom/scripts/skill_library.sh save <slug> "<description>" <code_path>
 ```
 
-At **task start**, retrieve relevant prior skills with keyword overlap (no embeddings — corp blocks them):
+At **task start**, retrieve relevant prior skills with keyword overlap (no embeddings — keyword-only):
 ```
 ~/.claude/skills/loom/scripts/skill_library.sh find "$ARGUMENTS" 5
 ```
@@ -294,9 +408,9 @@ Operate as an automated Scrum/Kanban partner during all code execution loops.
 
 ## Phase 14: Persistent Auto-Learning
 Persistent learning lives entirely at user scope; nothing is written into project folders.
-1. Read and update entries in `~/.claude/projects/-Users-skalaskar1/memory/` (the auto-memory system) to record durable preferences, project context, and recurring patterns. The `MEMORY.md` index there links every memory file.
+1. Read and update entries in `~/.claude/projects/<your-project>/memory/` (the auto-memory system) to record durable preferences, project context, and recurring patterns. The `MEMORY.md` index there links every memory file.
 2. Document recurring bugs, architectural decisions, and custom sprint workflows so your throughput permanently increases over time.
-3. Cross-link memory entries with the Voyager skill library (Phase 9 — `state/skills/`), the Reflexion log (Phase 9 — `state/reflections.jsonl`), and the hooks event DB (Phase 11 — `state/memory.db`). All four are user-scope artifacts.
+3. Cross-link memory entries with the Voyager skill library (Phase 9 — `state/skills/`), the Reflexion log (Phase 9 — `state/reflections.jsonl`), and the hooks event logs (Phase 11 — `state/events.jsonl` + `state/edits.jsonl`). All are user-scope artifacts.
 
 ## Phase 15: Swarm Health Verification & Benchmarking (NEW)
 End every sprint with measurable swarm health gates. If MCP is present:
@@ -307,7 +421,7 @@ End every sprint with measurable swarm health gates. If MCP is present:
 Otherwise compute locally:
 - **Pass rate** = passing tests / total tests
 - **Reflexion delta** = (pass rate this attempt) − (pass rate last attempt)
-- **Skill library growth** = new entries in `.grid/skills/` this run
+- **Skill library growth** = new entries in `state/skills/` this run
 - **Token efficiency** = artifact bytes produced / total tokens spent
 
 Surface these four numbers at sprint end. A sprint with negative Reflexion delta and zero skill growth is a regression — investigate before declaring done.
@@ -330,3 +444,27 @@ Surface these four numbers at sprint end. A sprint with negative Reflexion delta
 - claude-flow / ruv-swarm hooks → Phase 11
 - THOUGHT-ACTION-OBSERVATION scaffold → Phase 8
 - Hot/Cold memory tiering (LangChain) → Phase 10
+
+## Loom v2.0 — Native Workflow Spine (changelog)
+
+v2.0 adds a deterministic orchestration spine on Claude Code's native Dynamic
+Workflows, with the prose pipeline (Phases 0–15) preserved as fallback.
+
+- **Phase -1 mode select** routes to the Workflow spine (`/loom-workflow` →
+  `~/.claude/workflows/loom-orchestrate.js`) when `loom_env.sh workflow_probe`
+  returns `workflow`, else to the prose pipeline. `--workflow`/`--prose` override.
+- **Per-stage model routing** via `scripts/loom_config.sh` (single source of
+  truth, no hardcoded model ids): researchers/retrieve/learn→haiku,
+  synth/build→sonnet, critic→opus (configurable via `LOOM_CRITIC_MODEL` or
+  `state/config.json`). `loom_env.sh model_probe` auto-demotes critic if a model
+  is unreachable.
+- **Deterministic critic gate** via `scripts/hooks/critic_stop.sh`
+  (`SubagentStop`): a strict no-op unless `run_sentinel.sh` is armed for the
+  current cwd; when armed, runs the critic and `exit 2`s with the critique on
+  stderr to force iterate-until-pass, bounded by `max_critic_retries`, fail-open
+  on timeout/error. **Opt-in (default off)** because it shells `claude -p`.
+- **Learning layer reused as-is** — the workflow brackets each run with
+  `reflexion.sh`/`skill_library.sh`/`session_checkpoint.sh` (recall at start,
+  write at end). This is loom's durable moat; native Workflows have no equivalent.
+- See `loom-workflow/SKILL.md` (authoring spec) and `assets/workflow-contract.md`
+  (stable contract the authored script must satisfy).

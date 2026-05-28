@@ -2,8 +2,8 @@
 # skill_library.sh — Phase 9b. Voyager-style reusable skill recipes.
 #
 # Persists named code/prompt artifacts to ~/.claude/skills/loom/state/skills/<slug>/.
-# Retrieval is keyword-based with TF-IDF-like ranking (no embeddings — corp blocks
-# the embedding stack). Promote on N=3 successes; retire on failure ratio > 0.4.
+# Retrieval is keyword-based with TF-IDF-like ranking (no embeddings, no extra
+# installs). Promote on N=3 successes; retire on failure ratio > 0.4.
 #
 # Usage:
 #   skill_library.sh save <slug> <description> <code_path>

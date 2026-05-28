@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # rag_grep.sh — Phase 7a local code retrieval.
 #
-# Pure ripgrep + TF-IDF-lite ranking. No vector embeddings (corp blocks them).
+# Pure ripgrep + TF-IDF-lite ranking. No vector embeddings, no extra installs.
 # Complements web_research.sh: web_research = external knowledge,
 # rag_grep = local-codebase grounding for spawned agents.
 #
@@ -29,9 +29,8 @@ require_rg() {
             return 0
         fi
     fi
-    # Fall back to ripgrep vendored inside a Claude Code install. Most Claude
-    # Code distributions (the official Anthropic CLI, rebranded enterprise
-    # forks, etc.) ship a platform-matching `rg` under their node_modules.
+    # Fall back to ripgrep vendored inside the Claude Code install (Claude Code
+    # ships it for its own Grep tool). Pick the platform-matching binary.
     local arch
     arch="$(uname -m)"
     case "${arch}" in
@@ -40,12 +39,8 @@ require_rg() {
         *) sub="" ;;
     esac
     if [ -n "${sub}" ]; then
-        # Glob-search common Claude Code install locations. The first wildcard
-        # in each candidate matches any nvm node version; the second matches
-        # any package wrapper (e.g. @anthropic-ai/claude-code or a rebranded
-        # vendor's package that re-exports it).
+        # Search common Claude Code install locations
         local candidates=(
-            "${HOME}/.nvm/versions/node/"*/lib/node_modules/*/node_modules/@anthropic-ai/claude-code/vendor/ripgrep/${sub}/rg
             "${HOME}/.nvm/versions/node/"*/lib/node_modules/@anthropic-ai/claude-code/vendor/ripgrep/${sub}/rg
             "${HOME}/.local/share/claude/versions/"*/vendor/ripgrep/${sub}/rg
         )

@@ -22,7 +22,7 @@ mkdir -p "$(dirname "${JSONL}")" 2>/dev/null
 # Read the event payload (capped at 64KB so a runaway client can't fill memory).
 event="$(head -c 65536 || true)"
 
-# Build a metadata-only line. cwd is hashed so corp project paths don't sit
+# Build a metadata-only line. cwd is hashed so project paths don't sit
 # in plaintext in a user-scope log. The raw event payload is NEVER persisted.
 python3 - "${cmd}" "${event}" >> "${JSONL}" 2>/dev/null <<'PY' || exit 0
 import datetime, hashlib, json, os, sys

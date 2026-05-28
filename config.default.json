@@ -1,0 +1,14 @@
+{
+  "_comment": "Loom v2.0 config seed. Copied to state/config.json on install ONLY if absent (never clobbers user edits). state/config.json is gitignored. Override any model per role; set workflow_ok=false to force prose mode globally.",
+  "workflow_ok": true,
+  "max_critic_retries": 3,
+  "critic_timeout_sec": 90,
+  "models": {
+    "researcher": "claude-haiku-4-5",
+    "retrieve": "claude-haiku-4-5",
+    "learn": "claude-haiku-4-5",
+    "synth": "claude-sonnet-4-6",
+    "sparc": "claude-sonnet-4-6",
+    "critic": "claude-opus-4-8"
+  }
+}

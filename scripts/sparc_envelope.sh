@@ -41,7 +41,7 @@ pattern_for() {
 tools_for() {
     # Bash is intentionally restricted to test/build runners. Refinement and
     # completion agents must NOT have unbounded shell access — that would let
-    # them run rm -rf, git push, or hit corp infra. The orchestrator spawns
+    # them run rm -rf, git push, or hit external infra. The orchestrator spawns
     # these and is responsible for any broader Bash usage.
     case "$1" in
         specification) echo "Read,Grep,Glob,WebSearch,WebFetch" ;;

@@ -56,7 +56,9 @@ fi
 # ────────────────────────────────────────────────────────────────────────────
 say "About to remove:"
 say "  - ${DEST_DIR}/SKILL.md"
-say "  - ${DEST_DIR}/scripts/"
+say "  - ${DEST_DIR}/scripts/  (incl. v2.0 critic_stop hook)"
+say "  - ${DEST_DIR}/assets/  + Loom-authored ~/.claude/workflows/loom-*.js"
+say "  - sibling slash skills: /loom-{research,grep,envelope,critic,recall,skills,checkpoint,workflow}"
 if [ "${PURGE_STATE}" = "1" ]; then
     say "  - ${DEST_DIR}/state/  (purge)"
 else
@@ -136,9 +138,29 @@ rm -f "${DEST_DIR}/SKILL.md"
 rm -rf "${DEST_DIR}/scripts"
 say "removed scripts and SKILL.md"
 
+# Sibling slash skills
+SKILLS_DIR="$(dirname "${DEST_DIR}")"
+for sub in research grep envelope critic recall skills checkpoint workflow; do
+    rm -rf "${SKILLS_DIR}/loom-${sub}"
+done
+say "removed sibling slash skills"
+
+# v2.0 — workflow assets + any Loom-authored workflow scripts
+rm -rf "${DEST_DIR}/assets"
+for wf in "${HOME}/.claude/workflows/loom-orchestrate.js" "${HOME}/.claude/workflows/loom-research.js"; do
+    # Only remove if it carries the Loom reference marker (don't nuke user's own workflows).
+    if [ -f "${wf}" ] && grep -q "LOOM-REFERENCE-SCAFFOLD\|loom-orchestrate\|Loom v2.0" "${wf}" 2>/dev/null; then
+        rm -f "${wf}"
+        say "removed $(basename "${wf}")"
+    fi
+done
+
 if [ "${PURGE_STATE}" = "1" ]; then
     rm -rf "${DEST_DIR}/state"
     say "purged state directory"
+else
+    # Even when keeping state, clear the transient run sentinel dir (never user data).
+    rm -rf "${DEST_DIR}/state/run" 2>/dev/null || true
 fi
 
 # Remove the now-empty parent if nothing else lives there

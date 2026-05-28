@@ -1,351 +1,134 @@
 # Loom
 
-> Multi-agent orchestrator for Claude Code. Weaves parallel research and code
-> agents into one coordinated output. Pure shell + python3, zero installs,
-> corp-network-safe.
+> Multi-agent orchestrator for Claude Code. Runs a task through a pipeline of
+> parallel research and code agents with self-learning across runs. **v2.0**
+> runs on Claude Code's native Dynamic-Workflow spine when available (parallel,
+> deterministic, per-stage model routing) and falls back to a prose pipeline
+> otherwise. Pure shell + python3, zero installs, dependency-free.
 
-`/loom <task>` inside Claude Code. Done.
+Invoke (inside Claude Code):
 
----
-
-## What it does
-
-Loom is a **16-phase skill** that turns a single Claude Code session into a
-self-coordinating agent fan-out:
-
-| Phase | What |
-|---|---|
-| 0 | Inject live git status / diff so plans are grounded in reality |
-| 1 | Discover available skills, MCP servers, plugins |
-| 2 | Cross-repo retrieval lanes (local + web) |
-| 3 | Cloud-boundary / microservice topology checks |
-| 4 | Pick a swarm topology (mesh, hierarchical, star, ring, adaptive) |
-| 5 | **Fan-out**: 3–8 specialized subagents in one parallel `Agent` call |
-| 6 | SPARC 5-stage cycle (specification → completion) when implementing |
-| 7a | Local code retrieval via ripgrep + token-overlap ranking |
-| 7b | **Deep web research**: 5 researchers × 3 tiers (lite / pro / ultra) |
-| 8 | Daily sprint execution with Thought-Action-Observation scratchpad |
-| 9 | **Reflexion** loop + **Voyager** skill library — compounds across runs |
-| 10 | Session checkpoints for long-running work |
-| 11 | Lifecycle hooks → metadata-only event log |
-| 12 | Critic-agent gate before commit |
-| 13 | Agile/DevOps guardrails |
-| 14 | Persistent auto-learning at user-scope memory |
-| 15 | Sprint health metrics |
-
-The full breakdown is in [`SKILL.md`](./SKILL.md).
-
----
-
-## Why use it (instead of just talking to Claude Code)
-
-Three things compound across runs:
-
-1. **Self-learning.** Every task attempt appends a lesson to
-   `~/.claude/skills/loom/state/reflections.jsonl`. Re-running the same task
-   prepends the last 3 lessons before fan-out. Pass rates measurably improve
-   across iterations (Reflexion pattern, Shinn et al. 2023).
-2. **Skill library.** Successful artifacts (scripts, prompts, recipes) get
-   saved as named skills. Future tasks retrieve them by keyword overlap and
-   adapt them. Auto-promote on N=3 successes; auto-retire on >40% failure.
-3. **Parallel research.** Phase 7b spawns 5 web researchers in parallel, each
-   on a different angle (official docs, community, source/issues, recent
-   blogs, benchmarks), then synthesizes one cited brief. Three depth tiers:
-   - **lite** — 1 round, ~3 min wall time
-   - **pro** — 2 rounds, ~6 min (default)
-   - **ultra** — 3 rounds, ~10 min
-
-Plus a critic-agent gate (Phase 12) that adversarially reviews diffs before
-commit, and a session-checkpoint system (Phase 10) for long sprints.
-
-All of this runs natively in Claude Code's `Agent` tool. **Nothing is installed
-into your network or shell.**
-
----
-
-## Prerequisites
-
-Required:
-
-| Tool | Why | Verify |
-|---|---|---|
-| Claude Code | the host | `claude --version` |
-| Python 3.6+ | embedded inside hooks/scripts | `python3 --version` |
-| Bash 3.2+ | script interpreter | `bash --version` |
-| `shasum` | stable task hashing | `shasum --version` |
-
-Optional:
-
-| Tool | What you lose without it |
-|---|---|
-| `ripgrep` | Phase 7a. Loom auto-discovers ripgrep bundled inside Claude Code if not on PATH; only fully missing if neither is present. |
-
-Not needed (intentionally — replaced by the corp-safe scripts):
-
-- ❌ `claude-flow` / `ruv-swarm` MCP servers
-- ❌ `chromadb` / `sentence-transformers` (PyPI)
-- ❌ `npm install` / `pip install` of any kind
-- ❌ Internet to npm/pypi at runtime
+- `/loom <task>` — full pipeline (auto-selects Workflow spine or prose fallback)
+- `/loom-<sub>` — jump straight to one phase (`/loom-research`, `/loom-grep`,
+  `/loom-envelope`, `/loom-critic`, `/loom-recall`, `/loom-skills`,
+  `/loom-checkpoint`, `/loom-workflow`)
 
 ---
 
 ## Install
 
 ```bash
-git clone <this-repo-url> loom
+git clone https://github.com/Saurav-Kalaskar/loom.git loom
 cd loom
 bash install.sh
 ```
 
-The installer:
-1. Verifies prerequisites
-2. Copies scripts to `~/.claude/skills/loom/`
-3. Asks once whether to install Phase 11 lifecycle hooks (default Yes)
-4. Backs up `~/.claude/settings.json` before any merge
-5. Verifies all scripts execute
-
-To install non-interactively:
+Copies the skill + 8 sibling slash skills + workflow seeds into
+`~/.claude/skills/`, then asks about Phase 11 lifecycle hooks (default Yes) and
+the v2.0 deterministic critic gate (default No). Idempotent — safe to re-run.
 
 ```bash
-bash install.sh -y           # accept defaults (installs hooks)
-bash install.sh --no-hooks   # install scripts only, skip hooks
-bash install.sh --hooks      # install everything, no prompt
+bash install.sh -y                  # defaults: hooks on, critic gate off
+bash install.sh --no-hooks          # scripts only, skip hooks
+bash install.sh -y --critic-gate    # also enable the deterministic critic gate
 ```
 
-**Re-running `install.sh` is safe** — script files overwrite cleanly, and the
-hooks merge skips entries that are already there.
+**Requires:** Claude Code, `python3` ≥3.6, Bash, `shasum`. Optional `ripgrep`
+(auto-discovers Claude Code's bundled `rg` if not on PATH). No pip/npm — works
+behind a locked-down network with no PyPI/npm access. To share: clone + run
+`bash install.sh`.
 
 ---
 
 ## Use
 
-Inside Claude Code:
+### Full pipeline
 
 ```
 /loom <task description>
 ```
 
-Or invoke specific phases by talking to the orchestrator:
+Loom first probes for the native Workflow runtime and picks a mode:
+
+- **Workflow spine** (Claude Code ≥2.1.154) — a deterministic JS workflow fans
+  out subagents in the background with per-stage model routing: Haiku
+  researchers, Sonnet build, Opus critic. `recall → research → retrieve →
+  build → critic → learn`.
+- **Prose fallback** — the original 16-phase pipeline, run inline. Used when the
+  Workflow runtime is unavailable or on older Claude Code.
+
+Both call the same backing scripts and the same learning layer, so behavior is
+equivalent; the spine is just deterministic and cheaper. Force a mode:
 
 ```
-/loom build a notifications microservice — use SPARC, ultra-tier research
-/loom investigate why the auth flow is dropping refresh tokens — pro-tier
-/loom rename foo to bar          # auto-skips Phase 7 (trivial task)
+/loom --workflow build a rate limiter      # force the Workflow spine
+/loom --prose build a rate limiter         # force the prose pipeline
+/loom rename foo to bar                     # auto-skips web research (trivial)
 ```
 
-The orchestrator decides which phases to run based on task shape. For
-non-trivial tasks it will prompt you for the research tier (lite/pro/ultra).
+Per-role models live in `~/.claude/skills/loom/state/config.json` (override any
+role; `LOOM_CRITIC_MODEL` env wins for the critic). Check reachability with
+`bash ~/.claude/skills/loom/scripts/loom_env.sh model_probe`.
+
+### Subcommands (single phase)
+
+Each is its own slash command, so it shows up in Claude Code's `/`
+autocomplete:
+
+| Command            | Does                                              |
+|--------------------|---------------------------------------------------|
+| `/loom-research`   | Deep web research — 5 agents fan out → cited brief |
+| `/loom-grep`       | Search local code — ranked ripgrep hits           |
+| `/loom-envelope`   | Generate a SPARC stage prompt for an agent        |
+| `/loom-critic`     | Build an adversarial diff-reviewer prompt         |
+| `/loom-recall`     | Read/write Reflexion lessons from past attempts   |
+| `/loom-skills`     | Save/find reusable skill recipes                  |
+| `/loom-checkpoint` | Save/restore session state for long tasks         |
+| `/loom-workflow`   | Run the v2.0 native Workflow spine directly       |
+
+The legacy parent-dispatcher form (`/loom research <topic>`, `/loom menu`,
+etc.) still works and routes to the same scripts.
+
+Full phase-by-phase detail is in [`SKILL.md`](./SKILL.md).
+
+---
+
+## State & privacy
+
+All state lives at `~/.claude/skills/loom/state/` (per-machine, never synced,
+never inside a project). Reflexion lessons, skill library, research briefs,
+and session checkpoints accumulate there.
+
+If you opt into Phase 11 hooks, they log **metadata only** — file basenames +
+sha256 hashes + byte sizes. File contents, full paths, and edit text are
+**never** stored. Decline with `--no-hooks` at install if you don't want them.
+
+The optional v2.0 critic gate (`--critic-gate`, default off) is a `SubagentStop`
+hook that is a **strict no-op** unless a Loom run is active in the current
+directory; when active it runs an adversarial critic (one `claude -p` call) and
+forces iterate-until-pass, bounded by retries, fail-open on timeout. It persists
+nothing.
+
+Inspect anytime: `~/.claude/skills/loom/scripts/reflexion.sh stats`,
+`tail ~/.claude/skills/loom/state/edits.jsonl`.
 
 ---
 
 ## Uninstall
 
 ```bash
-bash uninstall.sh
+bash uninstall.sh                # remove skill + 8 siblings + hooks (incl critic gate); keep state
+bash uninstall.sh --purge        # also wipe state/
+bash uninstall.sh --keep-hooks   # leave hooks in settings.json
 ```
 
-By default this:
-- Removes `~/.claude/skills/loom/{SKILL.md,scripts}`
-- Removes the hooks block from `~/.claude/settings.json` (with backup)
-- **Preserves `~/.claude/skills/loom/state/`** (your reflections, sessions,
-  research briefs, hooks log)
-
-To wipe state too:
-
-```bash
-bash uninstall.sh --purge
-```
-
-To leave hooks in place (e.g., you're moving the install elsewhere):
-
-```bash
-bash uninstall.sh --keep-hooks
-```
-
----
-
-## What gets added to your machine
-
-```
-~/.claude/skills/loom/
-├── SKILL.md                              # the prompt the orchestrator runs
-├── scripts/
-│   ├── reflexion.sh                      # Phase 9 self-learning
-│   ├── session_checkpoint.sh             # Phase 10 session state
-│   ├── critic_gate.sh                    # Phase 12 critic prompt
-│   ├── web_research.sh                   # Phase 7b deep research
-│   ├── skill_library.sh                  # Phase 9b Voyager
-│   ├── sparc_envelope.sh                 # Phase 6 SPARC stages
-│   ├── rag_grep.sh                       # Phase 7a local code retrieval
-│   └── hooks/
-│       ├── session_event.sh              # SessionStart/Stop hook
-│       └── edit_event.sh                 # PreToolUse/PostToolUse Edit|Write
-└── state/                                # created on first use
-    ├── reflections.jsonl                 # Phase 9 lesson log
-    ├── events.jsonl                      # Phase 11 session log (metadata only)
-    ├── edits.jsonl                       # Phase 11 edit log (metadata only)
-    ├── sessions/<id>/state.json          # Phase 10 checkpoints
-    ├── research/<hash>/{job.json,brief.md,researcher_*.md}  # Phase 7b cache
-    └── skills/<slug>/{skill.json,code.<ext>}                # Phase 9b library
-```
-
-Total static install: **~50 KB**. State grows as you use it (a few KB per
-active hour — see Privacy below).
-
-If you opt in to Phase 11 hooks, this block is appended to
-`~/.claude/settings.json` (idempotent — re-installing won't duplicate):
-
-```json
-{
-  "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "~/.claude/skills/loom/scripts/hooks/session_event.sh start", "timeout": 5 }]}],
-    "Stop":         [{ "hooks": [{ "type": "command", "command": "~/.claude/skills/loom/scripts/hooks/session_event.sh stop",  "timeout": 5 }]}],
-    "PreToolUse":   [{ "matcher": "Edit|Write", "hooks": [{ "type": "command", "command": "~/.claude/skills/loom/scripts/hooks/edit_event.sh pre",  "timeout": 5 }]}],
-    "PostToolUse":  [{ "matcher": "Edit|Write", "hooks": [{ "type": "command", "command": "~/.claude/skills/loom/scripts/hooks/edit_event.sh post", "timeout": 5 }]}]
-  }
-}
-```
-
----
-
-## Privacy: what hooks log (and what they don't)
-
-Phase 11 hooks fire on every Claude Code session and every Edit/Write tool
-call across **every** project on your machine. To make this safe at scale:
-
-**Stored in `state/edits.jsonl` per edit:**
-
-| Field | Example | Note |
-|---|---|---|
-| `ts` | `2026-05-27T01:38:58Z` | UTC timestamp |
-| `phase` | `pre` or `post` | hook lifecycle |
-| `tool` | `Edit` or `Write` | tool name |
-| `file_basename` | `secret.cs` | last path component, max 120 chars |
-| `file_path_hash` | `a63a99fdb0bfca78` | sha256 of full path, truncated |
-| `cwd_basename` | `my-project` | leaf dir name only |
-| `cwd_hash` | `fd6d816f8b6b110a` | sha256 of full cwd, truncated |
-| `edit_size_bytes` | `29` | length of new content |
-
-**Never stored:**
-- Full file paths (only basename + hash)
-- Full working-directory paths (only basename + hash)
-- File content
-- `old_string` / `new_string` / `content` field contents
-- Any portion of the raw tool input payload
-
-The hash lets you correlate ("did another session touch the same file?")
-without storing the path itself. Verified empirically: a hook fed
-`/Users/x/Desktop/secret_project/secret.cs` containing `VERY_SENSITIVE_API_KEY_abc123`
-produced **0 grep hits** in the JSONL for either the path component or the
-content.
-
-If you don't want hooks at all, install with `--no-hooks` or just say no at
-the prompt. The skill works fine without them — you only lose Phase 11
-cross-session coordination.
-
----
-
-## Storage
-
-All state is JSONL or JSON-document — no SQLite, no daemon, no schema
-enforcement. Append-only logs are POSIX-safe for concurrent writers under
-PIPE_BUF.
-
-**Inspect at any time:**
-
-```bash
-# last 20 edits
-tail -20 ~/.claude/skills/loom/state/edits.jsonl | jq
-
-# session lifecycle
-tail -10 ~/.claude/skills/loom/state/events.jsonl
-
-# Reflexion stats
-~/.claude/skills/loom/scripts/reflexion.sh stats
-
-# skill library
-~/.claude/skills/loom/scripts/skill_library.sh list
-
-# session checkpoints
-~/.claude/skills/loom/scripts/session_checkpoint.sh list
-```
-
-**Rotate logs (manual; no auto-rotation):**
-
-```bash
-cd ~/.claude/skills/loom/state
-mv events.jsonl events.jsonl.$(date +%Y%m%d) && touch events.jsonl
-mv edits.jsonl  edits.jsonl.$(date +%Y%m%d)  && touch edits.jsonl
-```
-
----
-
-## Troubleshooting
-
-**`/loom` doesn't appear in Claude Code.**
-The skill folder must be at `~/.claude/skills/loom/` (exactly that path) and
-contain `SKILL.md`. Verify:
-```bash
-ls ~/.claude/skills/loom/SKILL.md
-```
-Restart Claude Code (skills are discovered at session start).
-
-**Hooks don't seem to fire.**
-SessionStart fires only on a *new* session — restart Claude Code. Verify the
-hooks block landed in settings.json:
-```bash
-python3 -c "import json; print(json.dumps(json.load(open('$HOME/.claude/settings.json'))['hooks'], indent=2))"
-```
-After triggering one Edit, check:
-```bash
-tail ~/.claude/skills/loom/state/edits.jsonl
-```
-If empty, check that `python3` is on PATH for non-interactive shells.
-
-**Phase 7a / `rag_grep.sh` errors with "ripgrep not found".**
-Either install ripgrep (`brew install ripgrep` on macOS) or check that Claude
-Code's bundled ripgrep is present at one of:
-```
-~/.nvm/versions/node/*/lib/node_modules/*/node_modules/@anthropic-ai/claude-code/vendor/ripgrep/<arch>-<os>/rg
-~/.local/share/claude/versions/*/vendor/ripgrep/<arch>-<os>/rg
-```
-
-**Web research times out (Phase 7b).**
-`lite` = 3 min, `pro` = 6 min, `ultra` = 10 min. On timeout the synthesizer
-runs over partial researcher output and the brief is labeled `[TIMEOUT]`. To
-bust the 24h cache and force fresh research, append `--research` to your
-task or pick a higher tier (Ultra busts a Pro-cached brief).
-
-**My corp network blocks `pip install` / `npm install`.**
-That's by design. Loom is **dependency-free at runtime**. If you've installed
-it and it still fails, you're hitting something else; check the prerequisites
-above.
-
----
-
-## Sharing with teammates
-
-This skill is designed to be self-contained. To share:
-
-1. They `git clone` this repo
-2. They run `bash install.sh`
-3. Done
-
-No PyPI, no npm, no proxy config, no daemon. Same skill, same state location,
-same prompts. Their state directory accumulates locally per-machine.
+Removes the sibling skills, workflow seeds, and any Loom-authored
+`~/.claude/workflows/loom-*.js`. State is preserved by default. settings.json is
+backed up before any edit.
 
 ---
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
-
----
-
-## Credits
-
-- Reflexion — Shinn et al., 2023
-- Voyager — Wang et al., 2023
-- Multi-agent research orchestration — Anthropic
-- THOUGHT-ACTION-OBSERVATION scaffold — ReAct line of work
-- SPARC methodology — community
+MIT — see [LICENSE](./LICENSE). Built on Reflexion (Shinn et al. 2023),
+Voyager (Wang et al. 2023), and Anthropic's multi-agent research patterns.
