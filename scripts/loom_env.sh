@@ -61,6 +61,16 @@ cmd="${1:-}"
 shift || true
 
 case "${cmd}" in
+    version)
+        # Installed Loom version (VERSION file sits one level up from scripts/).
+        vf="${HERE}/../VERSION"
+        if [ -f "${vf}" ]; then
+            head -1 "${vf}" | tr -d '[:space:]'
+            echo
+        else
+            echo "unknown"
+        fi
+        ;;
     cc_version)
         detect_cc_version
         ;;
@@ -106,7 +116,7 @@ case "${cmd}" in
         exit "${rc}"
         ;;
     *)
-        echo "Usage: $0 {workflow_probe|cc_version|model_probe [role]}" >&2
+        echo "Usage: $0 {version|workflow_probe|cc_version|model_probe [role]}" >&2
         exit 2
         ;;
 esac

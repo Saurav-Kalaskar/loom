@@ -115,10 +115,12 @@ for f in SKILL.md \
          loom-critic/SKILL.md loom-recall/SKILL.md loom-skills/SKILL.md \
          loom-checkpoint/SKILL.md loom-workflow/SKILL.md \
          assets/loom-orchestrate.reference.js assets/loom-research.reference.js \
-         assets/workflow-contract.md config.default.json; do
+         assets/workflow-contract.md config.default.json VERSION update.sh; do
     [ -f "${SCRIPT_DIR}/${f}" ] || fatal "package incomplete: missing ${f}"
 done
 say "package files present ✓"
+PKG_VERSION="$(head -1 "${SCRIPT_DIR}/VERSION" | tr -d '[:space:]')"
+say "package version: ${PKG_VERSION}"
 
 # ────────────────────────────────────────────────────────────────────────────
 #  Install scripts
@@ -128,10 +130,11 @@ say "Installing skill files to: ${DEST_DIR}"
 mkdir -p "${DEST_DIR}/scripts/hooks" "${DEST_DIR}/state"
 # rsync would be nicer but cp is more portable
 cp "${SCRIPT_DIR}/SKILL.md" "${DEST_DIR}/SKILL.md"
+cp "${SCRIPT_DIR}/VERSION" "${DEST_DIR}/VERSION"
 cp "${SCRIPT_DIR}/scripts/"*.sh "${DEST_DIR}/scripts/"
 cp "${SCRIPT_DIR}/scripts/hooks/"*.sh "${DEST_DIR}/scripts/hooks/"
 chmod +x "${DEST_DIR}/scripts/"*.sh "${DEST_DIR}/scripts/hooks/"*.sh
-say "skill installed at ${DEST_DIR}"
+say "skill installed at ${DEST_DIR} (v${PKG_VERSION})"
 
 # Sibling skills for slash-menu autocomplete (each is its own /loom-<sub>)
 SKILLS_DIR="$(dirname "${DEST_DIR}")"
@@ -379,8 +382,16 @@ else
 fi
 
 # ────────────────────────────────────────────────────────────────────────────
-#  Verification
+#  Persist install preferences (so update.sh can replay them, not re-prompt)
 # ────────────────────────────────────────────────────────────────────────────
+PREFS="${DEST_DIR}/state/install_prefs"
+{
+    echo "# Loom install preferences — written by install.sh, read by update.sh."
+    echo "# Edit to change what 'bash update.sh' applies on the next update."
+    echo "LOOM_PREF_HOOKS=${INSTALL_HOOKS:-no}"
+    echo "LOOM_PREF_CRITIC_GATE=${INSTALL_CRITIC_GATE:-no}"
+    echo "LOOM_PREF_STATUSLINE=${INSTALL_STATUSLINE:-no}"
+} > "${PREFS}" 2>/dev/null && say "saved install prefs → ${PREFS}"
 hr
 say "Verifying install…"
 "${DEST_DIR}/scripts/reflexion.sh" hash "loom install verification" >/dev/null \
@@ -431,11 +442,13 @@ say "  /loom menu               list direct-entry subcommands"
 say "  /loom-<subcommand> ...   single phase via slash command (research, grep,"
 say "                           envelope, critic, recall, skills, checkpoint,"
 say "                           workflow — all appear in / autocomplete)"
+say "Installed version:  v${PKG_VERSION}"
 say "Orchestration mode now:  ${MODE}"
 say "Model routing:  $("${DEST_DIR}/scripts/loom_config.sh" emit_json 2>/dev/null)"
 say "Memory & state directory:  ${DEST_DIR}/state/"
 say "Verify model reachability (optional, costs a few tokens):"
 say "  bash ${DEST_DIR}/scripts/loom_env.sh model_probe"
+say "Update later (from your clone):  git pull && bash update.sh"
 if [ "${HOOKS_MERGE}" = "yes" ]; then
     say "Hooks active. Restart any open Claude Code session to load them."
 fi

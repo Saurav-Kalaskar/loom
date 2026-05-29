@@ -163,9 +163,9 @@ fi
 # ────────────────────────────────────────────────────────────────────────────
 #  Files removal
 # ────────────────────────────────────────────────────────────────────────────
-rm -f "${DEST_DIR}/SKILL.md"
+rm -f "${DEST_DIR}/SKILL.md" "${DEST_DIR}/VERSION"
 rm -rf "${DEST_DIR}/scripts"
-say "removed scripts and SKILL.md"
+say "removed scripts, SKILL.md, VERSION"
 
 # Sibling slash skills
 SKILLS_DIR="$(dirname "${DEST_DIR}")"

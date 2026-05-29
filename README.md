@@ -36,7 +36,34 @@ bash install.sh -y --critic-gate    # also enable the deterministic critic gate
 **Requires:** Claude Code, `python3` ≥3.6, Bash, `shasum`. Optional `ripgrep`
 (auto-discovers Claude Code's bundled `rg` if not on PATH). No pip/npm — works
 behind a locked-down network with no PyPI/npm access. To share: clone + run
-`bash install.sh`.
+`bash install.sh`. **Keep the cloned folder** — that's how you update later.
+
+---
+
+## Updating
+
+When a new version is pushed, pull it and reinstall from your cloned folder:
+
+```bash
+cd loom            # your clone from the install step
+git pull           # fetch the latest
+bash update.sh     # reinstall, keeping your hook/critic/statusline choices
+```
+
+`update.sh` pulls the latest, replays the install options you chose originally
+(saved in `state/install_prefs`, so it won't re-prompt or flip a setting), and
+reinstalls. It's idempotent and your `state/` (Reflexion lessons, skills,
+checkpoints) is preserved. It reports the version change, e.g. `v2.1.0 → v2.2.0`.
+
+Check your installed version anytime:
+```bash
+bash ~/.claude/skills/loom/scripts/loom_env.sh version
+```
+
+> Deleted the clone? Just re-clone and run `bash install.sh` again — your
+> `state/` under `~/.claude/skills/loom/` is untouched by re-cloning.
+
+After updating, **restart any open Claude Code session** so it loads the changes.
 
 ---
 
