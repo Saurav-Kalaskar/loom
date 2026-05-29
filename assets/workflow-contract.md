@@ -9,7 +9,14 @@ guarantees* below.
 
 ## Phase order (load-bearing)
 
-1. **recall** — read prior learning. One agent runs:
+**Phase indicator (mandatory at EVERY phase entry):** call
+`run_sentinel.sh phase <name>` and print `▶ Loom: <name> phase` so the user sees
+progress in both the status bar ([LOOM:<phase>] badge) and the chat. The seed's
+`markPhase(name)` helper does both in one agent call.
+
+1. **recall** — FIRST action: arm the sentinel with
+   `run_sentinel.sh start loom-run recall` (arm at recall, not build, so the
+   [LOOM] badge shows for the whole run). Then read prior learning. One agent runs:
    - `reflexion.sh hash "<task>"` → `$HASH`
    - `reflexion.sh read "$HASH" 3` → prior lessons
    - `skill_library.sh find "<task>" 5` → reusable recipes
@@ -25,8 +32,8 @@ guarantees* below.
 3. **retrieve** — local grounding. One agent runs `rag_grep.sh cite <root>
    "<query>"`. Skip if not in a code repo. Model role: `retrieve` (haiku).
 
-4. **build** — implement. FIRST action: arm the sentinel with
-   `run_sentinel.sh start "$SESSION_ID"`. Then run SPARC stages in order
+4. **build** — implement. (Sentinel already armed in recall — just
+   `markPhase('build')`.) Then run SPARC stages in order
    (specification → pseudocode → architecture → refinement → completion), each
    agent's prompt body from `sparc_envelope.sh envelope <stage> "<task>"`.
    Model role: `sparc` (sonnet).

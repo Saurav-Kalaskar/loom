@@ -132,6 +132,35 @@ PY
 fi
 
 # ────────────────────────────────────────────────────────────────────────────
+#  Statusline unwrap (independent of hooks — always restore prior statusLine)
+# ────────────────────────────────────────────────────────────────────────────
+if [ -f "${SETTINGS}" ] && python3 -c "import json,sys; json.load(open(sys.argv[1]))" "${SETTINGS}" 2>/dev/null; then
+    python3 - "${SETTINGS}" <<'PY'
+import json, re, sys
+path = sys.argv[1]
+with open(path) as f:
+    cfg = json.load(f)
+sl = cfg.get("statusLine")
+if isinstance(sl, dict) and "loom_statusline_chain.sh" in (sl.get("command") or ""):
+    cmd = sl["command"]
+    m = re.search(r"LOOM_PRIOR_STATUSLINE='((?:[^']|'\\'')*)'", cmd)
+    if m:
+        prior = m.group(1).replace("'\\''", "'")
+        cfg["statusLine"] = {"type": "command", "command": prior}
+        msg = "restored prior statusLine"
+    else:
+        cfg.pop("statusLine", None)
+        msg = "removed (no prior to restore)"
+    with open(path, "w") as f:
+        json.dump(cfg, f, indent=2)
+        f.write("\n")
+    print(f"loom-statusline: {msg}")
+else:
+    print("loom-statusline: not wired by Loom; left as-is")
+PY
+fi
+
+# ────────────────────────────────────────────────────────────────────────────
 #  Files removal
 # ────────────────────────────────────────────────────────────────────────────
 rm -f "${DEST_DIR}/SKILL.md"
@@ -162,6 +191,9 @@ else
     # Even when keeping state, clear the transient run sentinel dir (never user data).
     rm -rf "${DEST_DIR}/state/run" 2>/dev/null || true
 fi
+
+# Always remove the status-bar flag file (transient, no user data).
+rm -f "${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/.loom-active" 2>/dev/null || true
 
 # Remove the now-empty parent if nothing else lives there
 if [ -d "${DEST_DIR}" ] && [ -z "$(ls -A "${DEST_DIR}" 2>/dev/null)" ]; then

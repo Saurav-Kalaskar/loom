@@ -40,15 +40,27 @@ const sh = (label, phase, cmdLine) =>
     { label, phase, model: MODEL.learn }
   )
 
-// ---- Phase 0: read the model map once (so nothing is hardcoded) ----
+// markPhase: announce the current phase to the user via BOTH the status-bar
+// flag (run_sentinel.sh phase) and an in-chat line. Call at every transition so
+// the user always sees which Loom phase is running. (Agent runs the shell; the
+// JS only coordinates + log()s.)
+const markPhase = (name) =>
+  sh(`phase:${name}`, name,
+     `bash ${LOOM}/run_sentinel.sh phase ${name} >/dev/null 2>&1; echo "▶ Loom: ${name} phase"`)
+
+// ---- recall: arm the sentinel FIRST so the badge shows for the whole run ----
 phase('recall')
+await sh('sentinel:start', 'recall', `bash ${LOOM}/run_sentinel.sh start loom-run recall`)
+await markPhase('recall')
+
+// read the model map once (so nothing is hardcoded)
 const mapJson = await agent(
   `Run: bash ${LOOM}/loom_config.sh emit_json — return ONLY the JSON it prints.`,
   { label: 'config:models', phase: 'recall' }
 )
 const MODEL = JSON.parse(mapJson) // { researcher, retrieve, learn, synth, sparc, critic }
 
-// ---- recall: prior learning ----
+// recall: prior learning
 const HASH = (await sh('reflexion:hash', 'recall',
   `bash ${LOOM}/reflexion.sh hash ${JSON.stringify(TASK)}`)).trim()
 const lessons = await sh('reflexion:read', 'recall',
@@ -61,6 +73,7 @@ log(`recall: hash=${HASH.slice(0,8)} session=${SESSION_ID}`)
 
 // ---- research: skip-gate, then 5 researchers + synth ----
 phase('research')
+await markPhase('research')
 const skip = await agent(
   `Run: bash ${LOOM}/web_research.sh auto_skip ${JSON.stringify(TASK)}; ` +
   `then print "SKIP" if it exited 0, else "DO".`,
@@ -87,6 +100,7 @@ if (!/SKIP/.test(skip)) {
 
 // ---- retrieve: local grounding ----
 phase('retrieve')
+await markPhase('retrieve')
 const citations = await sh('rag:cite', 'retrieve',
   `bash ${LOOM}/rag_grep.sh cite ./ ${JSON.stringify(TASK)} 12 || true`)
 
@@ -97,9 +111,11 @@ const sharedContext =
   `TASK: ${TASK}\n\nPRIOR LESSONS:\n${lessons}\n\nRECIPES:\n${recipes}\n\n` +
   `RESEARCH BRIEF:\n${brief}\n\nLOCAL CITATIONS:\n${citations}`
 
-// Arm the sentinel ONCE at the start of build (agent runs it; script can't shell).
+// Sentinel already armed in recall; just mark the phase. (The critic-gate hook
+// only fires on SubagentStop WITH a diff — no diff exists until build edits, so
+// arming early is safe.)
 phase('build')
-await sh('sentinel:start', 'build', `bash ${LOOM}/run_sentinel.sh start ${SESSION_ID}`)
+await markPhase('build')
 
 while (attempt < MAX && /REJECT/.test(verdict)) {
   attempt++
@@ -117,6 +133,7 @@ while (attempt < MAX && /REJECT/.test(verdict)) {
   paths       = await sh('diff:paths',   'build', `git -C ./ diff --name-only 2>/dev/null || echo ""`)
 
   phase('critic')
+  await markPhase('critic')
   const criticBody = await sh('critic:prompt', 'critic',
     `bash ${LOOM}/critic_gate.sh prompt ${JSON.stringify(diffSummary)} ${JSON.stringify(paths)}`)
   // Optional schema; falls back to text contract (see workflow-contract.md).
@@ -136,8 +153,9 @@ while (attempt < MAX && /REJECT/.test(verdict)) {
   log(`critic try ${attempt}: ${verdict}`)
 }
 
-// ---- learn: ALWAYS runs (records outcome + clears sentinel) ----
+// ---- learn: ALWAYS runs (records outcome + clears sentinel + flag) ----
 phase('learn')
+await markPhase('learn')
 const outcome = /REJECT/.test(verdict) ? 'fail' : 'pass'
 const lesson  = /REJECT/.test(verdict)
   ? `Critic rejected after ${attempt} attempts: ${critique.slice(0,180)}`

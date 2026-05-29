@@ -31,6 +31,7 @@ require() {
 # ────────────────────────────────────────────────────────────────────────────
 INSTALL_HOOKS=""        # "" = ask, "yes" = force install, "no" = skip
 INSTALL_CRITIC_GATE=""  # "" = ask, "yes" = enable v2.0 critic gate, "no" = skip
+INSTALL_STATUSLINE=""   # "" = ask, "yes" = wire [LOOM] badge, "no" = skip
 ASSUME_YES=0
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -38,6 +39,8 @@ while [ $# -gt 0 ]; do
         --no-hooks)         INSTALL_HOOKS="no"  ;;
         --critic-gate)      INSTALL_CRITIC_GATE="yes" ;;
         --no-critic-gate)   INSTALL_CRITIC_GATE="no"  ;;
+        --statusline)       INSTALL_STATUSLINE="yes" ;;
+        --no-statusline)    INSTALL_STATUSLINE="no"  ;;
         -y|--yes)           ASSUME_YES=1 ;;
         -h|--help)
             cat <<EOF
@@ -48,15 +51,18 @@ Options:
   --no-hooks         Skip Phase 11 hooks entirely
   --critic-gate      Enable v2.0 deterministic critic gate (SubagentStop hook)
   --no-critic-gate   Skip the critic gate (default)
-  -y, --yes          Assume yes for prompts (hooks=yes, critic-gate=NO)
+  --statusline       Wire the [LOOM:<phase>] status-bar badge (composes with
+                     any existing statusLine, e.g. caveman)
+  --no-statusline    Skip the status-bar badge
+  -y, --yes          Assume yes for prompts (hooks=yes, critic-gate=NO, statusline=YES)
   -h, --help         Show this help
 
 Examples:
-  bash install.sh                     # interactive — asks about hooks + critic gate
-  bash install.sh --hooks             # lifecycle hooks, prompt for critic gate
+  bash install.sh                     # interactive — asks about hooks, critic gate, statusline
   bash install.sh --no-hooks          # scripts only; no hooks
-  bash install.sh -y                  # silent: hooks on, critic gate off
-  bash install.sh -y --critic-gate    # silent: hooks on, critic gate on
+  bash install.sh -y                  # silent: hooks on, critic gate off, statusline on
+  bash install.sh -y --critic-gate    # silent: + critic gate on
+  bash install.sh -y --no-statusline  # silent: no status-bar badge
 EOF
             exit 0
             ;;
@@ -102,6 +108,7 @@ for f in SKILL.md \
          scripts/web_research.sh scripts/skill_library.sh scripts/sparc_envelope.sh \
          scripts/rag_grep.sh \
          scripts/loom_config.sh scripts/loom_env.sh scripts/run_sentinel.sh \
+         scripts/loom_status.sh scripts/loom_statusline_chain.sh \
          scripts/hooks/session_event.sh scripts/hooks/edit_event.sh \
          scripts/hooks/critic_stop.sh \
          loom-research/SKILL.md loom-grep/SKILL.md loom-envelope/SKILL.md \
@@ -205,6 +212,31 @@ EOF
     fi
 fi
 
+# ────────────────────────────────────────────────────────────────────────────
+#  Status-bar badge decision (v2.0) — default YES (passive, safe)
+# ────────────────────────────────────────────────────────────────────────────
+if [ -z "${INSTALL_STATUSLINE}" ]; then
+    if [ "${ASSUME_YES}" = "1" ]; then
+        INSTALL_STATUSLINE="yes"
+    else
+        hr
+        cat <<'EOF'
+Status-bar badge (optional, default Yes)
+  Shows [LOOM:<phase>] in the Claude Code status bar while a Loom run is
+  active, so you can see which phase is running. If another statusLine is
+  already configured (e.g. caveman), Loom COMPOSES with it — both badges
+  show, nothing is replaced. Your settings.json is backed up first.
+
+EOF
+        printf 'Wire the status-bar badge? [Y/n] '
+        read -r answer
+        case "${answer:-Y}" in
+            [Yy]*|"") INSTALL_STATUSLINE="yes" ;;
+            *)        INSTALL_STATUSLINE="no"  ;;
+        esac
+    fi
+fi
+
 # The critic-gate hook requires the lifecycle-hooks merge path to run (it writes
 # to the same settings.json). If the user wants the gate but declined hooks,
 # enable the merge path anyway (it only adds the SubagentStop entry).
@@ -291,6 +323,62 @@ else
 fi
 
 # ────────────────────────────────────────────────────────────────────────────
+#  Status-bar badge composition (if elected)
+# ────────────────────────────────────────────────────────────────────────────
+if [ "${INSTALL_STATUSLINE}" = "yes" ]; then
+    hr
+    say "Wiring [LOOM] status-bar badge into ${SETTINGS}"
+    mkdir -p "$(dirname "${SETTINGS}")"
+    [ -f "${SETTINGS}" ] || printf '{}\n' > "${SETTINGS}"
+    if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "${SETTINGS}" 2>/dev/null; then
+        warn "${SETTINGS} is not valid JSON; skipping statusline wiring"
+    else
+        SL_BACKUP="${SETTINGS}.bak.loom-statusline-$(date +%Y%m%d-%H%M%S)"
+        cp "${SETTINGS}" "${SL_BACKUP}"
+        say "backup: ${SL_BACKUP}"
+        CHAIN="${DEST_DIR}/scripts/loom_statusline_chain.sh"
+        python3 - "${SETTINGS}" "${CHAIN}" <<'PY'
+import json, sys
+path, chain = sys.argv[1], sys.argv[2]
+with open(path) as f:
+    cfg = json.load(f)
+
+chain_cmd = f'bash "{chain}"'
+sl = cfg.get("statusLine")
+prior_cmd = ""
+if isinstance(sl, dict) and sl.get("type") == "command":
+    existing = (sl.get("command") or "").strip()
+    if "loom_statusline_chain.sh" in existing:
+        # Already our chain — idempotent no-op (keep whatever prior it already wraps).
+        print("loom-statusline: already wired; left in place")
+        raise SystemExit(0)
+    prior_cmd = existing  # the command we must preserve (e.g. caveman)
+
+# Build the chain command, inlining the prior statusline as an env var the
+# wrapper reads. Single-quote the prior cmd for the shell; escape embedded quotes.
+if prior_cmd:
+    esc = prior_cmd.replace("'", "'\\''")
+    new_cmd = f"LOOM_PRIOR_STATUSLINE='{esc}' {chain_cmd}"
+    note = "composed with existing statusLine"
+else:
+    new_cmd = chain_cmd  # wrapper auto-discovers caveman if present, else loom-only
+    note = "no prior statusLine; chain auto-discovers caveman if present"
+
+cfg["statusLine"] = {"type": "command", "command": new_cmd}
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+print(f"loom-statusline: wired ({note})")
+PY
+        say "status-bar badge wired (re-running is safe — idempotent)"
+    fi
+else
+    hr
+    say "Skipping status-bar badge. The in-chat '▶ Loom: <phase>' line still shows."
+    say "To add later: re-run with --statusline"
+fi
+
+# ────────────────────────────────────────────────────────────────────────────
 #  Verification
 # ────────────────────────────────────────────────────────────────────────────
 hr
@@ -325,6 +413,12 @@ if printf '{}' | "${DEST_DIR}/scripts/hooks/critic_stop.sh" >/dev/null 2>&1; the
     say "  critic_stop.sh ✓ (no-op when idle — verified exit 0)"
 else
     warn "  critic_stop.sh FAILED no-op self-test"
+fi
+# statusline: badge silent when idle, renders [LOOM:<phase>] when a phase is set
+if [ -z "$(printf '{}' | "${DEST_DIR}/scripts/loom_status.sh" 2>/dev/null)" ]; then
+    say "  loom_status.sh ✓ (silent when idle)"
+else
+    warn "  loom_status.sh should be silent when idle"
 fi
 
 hr

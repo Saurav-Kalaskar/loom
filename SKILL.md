@@ -117,6 +117,26 @@ bash ~/.claude/skills/loom/scripts/loom_env.sh workflow_probe
   or `workflow_ok:false` in config, or `--prose` forced). Proceed to Phase 0 and
   run the prose pipeline below exactly as in v1.2.
 
+### Progress indicator (BOTH paths — mandatory)
+
+The user must always see which Loom phase is running — in the status bar
+(`[LOOM:<phase>]` badge) and in the chat.
+
+- **Prose path:** at the START of each phase you run, FIRST call (one `Bash`):
+  ```
+  bash ~/.claude/skills/loom/scripts/run_sentinel.sh phase <phase> && echo "▶ Loom: <phase> phase"
+  ```
+  where `<phase>` is a short token: `context`, `discovery`, `topology`, `fanout`,
+  `sparc`, `research`, `retrieval`, `implement`, `reflexion`, `test`, `critic`,
+  `metrics`. At the VERY FIRST phase also arm it:
+  `bash ~/.claude/skills/loom/scripts/run_sentinel.sh start loom-run context`.
+  At the END of the run (after Phase 15 / on completion / on abort), ALWAYS
+  clear it: `bash ~/.claude/skills/loom/scripts/run_sentinel.sh stop`.
+- **Workflow path:** the seed's `markPhase()` helper already does this at every
+  phase; the sentinel is armed in `recall` and cleared in `learn`. No extra work.
+- The `[LOOM]` badge requires the chained statusline (installed by `install.sh`);
+  the `▶ Loom: <phase>` chat line works regardless. Always emit the chat line.
+
 **Override:** `--workflow` forces the spine; `--prose` forces Phases 0–15.
 
 **Why dual-path:** Dynamic Workflows are research-preview. If the runtime

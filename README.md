@@ -70,6 +70,20 @@ Per-role models live in `~/.claude/skills/loom/state/config.json` (override any
 role; `LOOM_CRITIC_MODEL` env wins for the critic). Check reachability with
 `bash ~/.claude/skills/loom/scripts/loom_env.sh model_probe`.
 
+### Seeing which phase is running
+
+While a run is active, Loom shows the current phase two ways:
+
+- **Status bar:** a `[LOOM:<phase>]` badge (e.g. `[LOOM:research]`, `[LOOM:critic]`).
+  `install.sh` wires this and **composes** with any existing statusLine — if you
+  use the caveman plugin, you'll see `[CAVEMAN] [LOOM:build]` side by side, nothing
+  is replaced. Opt out with `--no-statusline`.
+- **In chat:** a `▶ Loom: <phase> phase` line at each transition (always shown,
+  no setup needed).
+
+This works in both modes — the workflow seed and the prose pipeline both mark
+every phase.
+
 ### Subcommands (single phase)
 
 Each is its own slash command, so it shows up in Claude Code's `/`
